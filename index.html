@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Fall Combat Probability Calculator</title>
+<style>
+body { font-family: Arial, sans-serif; background:#111; color:#eee; padding:20px; }
+h1 { margin-top:0; }
+.container { display:flex; gap:40px; flex-wrap:wrap; }
+.panel { background:#1c1c1c; padding:20px; border-radius:8px; width:360px; }
+input, select { width:100%; margin-bottom:10px; padding:5px; }
+button { padding:8px 12px; cursor:pointer; }
+.results { margin-top:20px; }
+.bar { height:18px; background:#4a6fa5; margin:3px 0; }
+.bar-label { font-size:12px; }
+.summary { margin-bottom:15px; }
+</style>
+</head>
+<body>
+
+<h1>Fall Combat Probability Calculator</h1>
+
+<div class="container">
+<div class="panel">
+
+<label>Mode</label>
+<select id="mode">
+  <option value="clash">Clash</option>
+  <option value="shoot">Shoot</option>
+</select>
+
+<label>Number of Attacks</label>
+<input type="number" id="attacks" value="5">
+
+<label>Fight / Accuracy</label>
+<input type="number" id="skill" value="1">
+
+<label>Pierce</label>
+<input type="number" id="pierce" value="0">
+
+<label>Target Dodge</label>
+<input type="number" id="dodge" value="6">
+
+<label>Target Resistance</label>
+<input type="number" id="resistance" value="2">
+
+<div id="clashMods">
+<label><input type="checkbox" id="secondRound"> Clash Round 2 (+1 Fight)</label>
+</div>
+
+<div id="shootMods" style="display:none;">
+<label><input type="checkbox" id="cover"> Target in Cover (-2 Accuracy)</label>
+<label><input type="checkbox" id="engaged"> Target Engaged (-2 Accuracy)</label>
+</div>
+
+<button onclick="calculate()">Calculate</button>
+
+<div class="results" id="summary"></div>
+<div id="distribution"></div>
+
+</div>
+</div>
+
+<script>
+
+// Binomial coefficient
+function choose(n,k){
+  if(k<0||k>n) return 0;
+  if(k===0||k===n) return 1;
+  let r=1;
+  for(let i=1;i<=k;i++){
+    r=r*(n-k+i)/i;
+  }
+  return r;
+}
+
+// Binomial probability
+function binomial(n,k,p){
+  return choose(n,k)*Math.pow(p,k)*Math.pow(1-p,n-k);
+}
+
+// Distribution of hits
+function hitDistribution(n,p){
+  let dist=[];
+  for(let k=0;k<=n;k++){
+    dist.push(binomial(n,k,p));
+  }
+  return dist;
+}
+
+// Distribution of resistance saves
+function saveDistribution(r,threshold){
+  let pSave = (11-threshold)/10;
+  if(pSave<0) pSave=0;
+  if(pSave>1) pSave=1;
+  let dist=[];
+  for(let k=0;k<=r;k++){
+    dist.push(binomial(r,k,pSave));
+  }
+  return dist;
+}
+
+// Damage mapping
+function damageEffect(mode, dmg){
+  if(mode==="clash"){
+    if(dmg===0) return {w:0,wd:0};
+    if(dmg===1) return {w:1,wd:0};
+    if(dmg===2) return {w:1,wd:1};
+    if(dmg===3) return {w:2,wd:1};
+    if(dmg===4) return {w:2,wd:2};
+    if(dmg===5) return {w:2,wd:3};
+    return {w:2,wd:dmg-2};
+  } else { // shoot
+    if(dmg===0) return {w:0,wd:0};
+    if(dmg===1) return {w:1,wd:0};
+    if(dmg===2) return {w:1,wd:1};
+    if(dmg===3) return {w:2,wd:1};
+    return {w:2,wd:dmg-2};
+  }
+}
+
+function calculate(){
+
+  let mode = document.getElementById("mode").value;
+  let attacks = parseInt(document.getElementById("attacks").value);
+  let skill = parseInt(document.getElementById("skill").value);
+  let pierce = parseInt(document.getElementById("pierce").value);
+  let dodge = parseInt(document.getElementById("dodge").value);
+  let resistance = parseInt(document.getElementById("resistance").value);
+
+  if(mode==="clash" && document.getElementById("secondRound").checked){
+    skill +=1;
+  }
+
+  if(mode==="shoot"){
+    if(document.getElementById("cover").checked) skill -=2;
+    if(document.getElementById("engaged").checked) skill -=2;
+  }
+
+  let hitTarget = dodge - skill;
+  let pHit = (11-hitTarget)/10;
+  if(pHit<0) pHit=0;
+  if(pHit>1) pHit=1;
+
+  let hitDist = hitDistribution(attacks,pHit);
+
+  let threshold = 6 + pierce;
+  let saveDist = saveDistribution(resistance,threshold);
+
+  let finalDist = {};
+
+  for(let h=0;h<hitDist.length;h++){
+    for(let s=0;s<saveDist.length;s++){
+      let final = Math.max(0,h-s);
+      let prob = hitDist[h]*saveDist[s];
+      if(!finalDist[final]) finalDist[final]=0;
+      finalDist[final]+=prob;
+    }
+  }
+
+  let maxDmg = Math.max(...Object.keys(finalDist));
+  let expected=0;
+  let expectedW=0;
+  let expectedWD=0;
+  let cumW1=0;
+  let cumW2=0;
+
+  let html="<div class='summary'>";
+
+  for(let d=0;d<=maxDmg;d++){
+    let p = finalDist[d]||0;
+    expected+=d*p;
+    let eff = damageEffect(mode,d);
+    expectedW+=eff.w*p;
+    expectedWD+=eff.wd*p;
+    if(eff.wd>=1) cumW1+=p;
+    if(eff.wd>=2) cumW2+=p;
+  }
+
+  let critProb = 1-Math.pow(0.9,attacks);
+
+  html+=`Expected Damage #: ${expected.toFixed(3)}<br>`;
+  html+=`Expected Wounds: ${expectedWD.toFixed(3)}<br>`;
+  html+=`Expected Weariness: ${expectedW.toFixed(3)}<br>`;
+  html+=`Chance ≥1 Wound: ${(cumW1*100).toFixed(2)}%<br>`;
+  html+=`Chance ≥2 Wounds: ${(cumW2*100).toFixed(2)}%<br>`;
+  html+=`Crit Chance (≥1 natural 10): ${(critProb*100).toFixed(2)}%`;
+  html+="</div>";
+
+  document.getElementById("summary").innerHTML=html;
+
+  let distHTML="<h3>Damage Distribution</h3>";
+  for(let d=0;d<=maxDmg;d++){
+    let p=finalDist[d]||0;
+    let eff=damageEffect(mode,d);
+    distHTML+=`<div class='bar-label'>${d}: ${(p*100).toFixed(2)}% (W:${eff.wd} / Wr:${eff.w})</div>`;
+    distHTML+=`<div class='bar' style='width:${p*300}px'></div>`;
+  }
+
+  document.getElementById("distribution").innerHTML=distHTML;
+}
+
+// UI toggle
+document.getElementById("mode").addEventListener("change",function(){
+  if(this.value==="clash"){
+    document.getElementById("clashMods").style.display="block";
+    document.getElementById("shootMods").style.display="none";
+  } else {
+    document.getElementById("clashMods").style.display="none";
+    document.getElementById("shootMods").style.display="block";
+  }
+});
+
+</script>
+
+</body>
+</html>
